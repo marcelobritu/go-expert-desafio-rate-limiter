@@ -3,6 +3,7 @@ package limiter
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/marcelobritu/go-expert-desafio-rate-limiter/config"
@@ -36,37 +37,7 @@ type CheckResult struct {
 func (rl *RateLimiter) CheckIPRateLimit(ctx context.Context, ip string) (*CheckResult, error) {
 	key := strategy.GetKeyWithPrefix("ip", ip)
 
-	// Check if IP is currently blocked
-	blocked, blockUntil, err := rl.storage.IsBlocked(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check if IP is blocked: %w", err)
-	}
-
-	if blocked {
-		return &CheckResult{
-			Allowed:   false,
-			Remaining: 0,
-			ResetTime: blockUntil,
-			BlockTime: time.Until(blockUntil),
-			Reason:    "IP is currently blocked",
-		}, nil
-	}
-
-	// Get current rate limit info
-	info, err := rl.storage.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rate limit info: %w", err)
-	}
-
-	// Check if we need to reset the counter (new time window)
-	now := time.Now()
-	if now.After(info.ResetTime) {
-		// Reset counter for new time window
-		info.Count = 0
-		info.ResetTime = now.Add(time.Second)
-	}
-
-	// Increment counter first
+	// Increment counter first (Redis will handle TTL automatically)
 	newCount, err := rl.storage.Increment(ctx, key, time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to increment counter: %w", err)
@@ -74,19 +45,14 @@ func (rl *RateLimiter) CheckIPRateLimit(ctx context.Context, ip string) (*CheckR
 
 	// Check if limit is exceeded after increment
 	if newCount > rl.config.RateLimit.IPLimit {
-		// Block the IP
-		blockDuration := rl.config.RateLimit.IPBlockTime
-		blockUntil := now.Add(blockDuration)
-
-		if err := rl.storage.SetBlocked(ctx, key, blockUntil); err != nil {
-			return nil, fmt.Errorf("failed to block IP: %w", err)
-		}
+		// Return rate limit exceeded (no permanent blocking)
+		now := time.Now()
+		resetTime := now.Add(time.Second)
 
 		return &CheckResult{
 			Allowed:   false,
 			Remaining: 0,
-			ResetTime: blockUntil,
-			BlockTime: blockDuration,
+			ResetTime: resetTime,
 			Reason:    "IP rate limit exceeded",
 		}, nil
 	}
@@ -96,32 +62,19 @@ func (rl *RateLimiter) CheckIPRateLimit(ctx context.Context, ip string) (*CheckR
 		remaining = 0
 	}
 
+	// Calculate reset time (current time + 1 second)
+	resetTime := time.Now().Add(time.Second)
+
 	return &CheckResult{
 		Allowed:   true,
 		Remaining: remaining,
-		ResetTime: info.ResetTime,
+		ResetTime: resetTime,
 	}, nil
 }
 
 // CheckTokenRateLimit checks rate limit for a token
 func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*CheckResult, error) {
 	key := strategy.GetKeyWithPrefix("token", token)
-
-	// Check if token is currently blocked
-	blocked, blockUntil, err := rl.storage.IsBlocked(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check if token is blocked: %w", err)
-	}
-
-	if blocked {
-		return &CheckResult{
-			Allowed:   false,
-			Remaining: 0,
-			ResetTime: blockUntil,
-			BlockTime: time.Until(blockUntil),
-			Reason:    "Token is currently blocked",
-		}, nil
-	}
 
 	// Get token-specific configuration
 	tokenConfig, exists := rl.config.RateLimit.TokenLimits[token]
@@ -130,21 +83,7 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 		return nil, fmt.Errorf("token not configured")
 	}
 
-	// Get current rate limit info
-	info, err := rl.storage.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rate limit info: %w", err)
-	}
-
-	// Check if we need to reset the counter (new time window)
-	now := time.Now()
-	if now.After(info.ResetTime) {
-		// Reset counter for new time window
-		info.Count = 0
-		info.ResetTime = now.Add(time.Second)
-	}
-
-	// Increment counter first
+	// Increment counter first (Redis will handle TTL automatically)
 	newCount, err := rl.storage.Increment(ctx, key, time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to increment counter: %w", err)
@@ -152,19 +91,14 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 
 	// Check if limit is exceeded after increment
 	if newCount > tokenConfig.Limit {
-		// Block the token
-		blockDuration := tokenConfig.BlockTime
-		blockUntil := now.Add(blockDuration)
-
-		if err := rl.storage.SetBlocked(ctx, key, blockUntil); err != nil {
-			return nil, fmt.Errorf("failed to block token: %w", err)
-		}
+		// Return rate limit exceeded (no permanent blocking)
+		now := time.Now()
+		resetTime := now.Add(time.Second)
 
 		return &CheckResult{
 			Allowed:   false,
 			Remaining: 0,
-			ResetTime: blockUntil,
-			BlockTime: blockDuration,
+			ResetTime: resetTime,
 			Reason:    "Token rate limit exceeded",
 		}, nil
 	}
@@ -174,10 +108,13 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 		remaining = 0
 	}
 
+	// Calculate reset time (current time + 1 second)
+	resetTime := time.Now().Add(time.Second)
+
 	return &CheckResult{
 		Allowed:   true,
 		Remaining: remaining,
-		ResetTime: info.ResetTime,
+		ResetTime: resetTime,
 	}, nil
 }
 
@@ -185,14 +122,18 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 func (rl *RateLimiter) CheckRateLimit(ctx context.Context, ip, token string) (*CheckResult, error) {
 	// If token is provided, check token limits first
 	if token != "" {
+		log.Printf("Checking token rate limit for token: %s", token)
 		tokenResult, err := rl.CheckTokenRateLimit(ctx, token)
 		if err == nil {
+			log.Printf("Token rate limit result: Allowed=%t, Remaining=%d", tokenResult.Allowed, tokenResult.Remaining)
 			return tokenResult, nil
 		}
+		log.Printf("Token rate limit failed: %v, falling back to IP", err)
 		// If token check fails (e.g., token not configured), fall back to IP check
 	}
 
 	// Check IP limits
+	log.Printf("Checking IP rate limit for IP: %s", ip)
 	return rl.CheckIPRateLimit(ctx, ip)
 }
 

@@ -141,16 +141,6 @@ func ParseTokenFromHeader(headerValue string) (string, error) {
 		return "", fmt.Errorf("empty header value")
 	}
 
-	// Expected format: "API_KEY: <TOKEN>"
-	if len(headerValue) < 8 {
-		return "", fmt.Errorf("invalid header format")
-	}
-
-	// Remove "API_KEY: " prefix
-	token := headerValue[8:]
-	if token == "" {
-		return "", fmt.Errorf("empty token")
-	}
-
-	return token, nil
+	// The header value is just the token itself
+	return headerValue, nil
 }

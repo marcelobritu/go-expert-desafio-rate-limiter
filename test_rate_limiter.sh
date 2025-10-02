@@ -43,7 +43,7 @@ sleep 2
 
 # Teste 4: Teste com token
 echo "=== Testando Limitação por Token ==="
-for i in {1..5}; do
+for i in {1..12}; do
     echo "Requisição $i:"
     make_request "http://localhost:8080/api/test" "API_KEY: abc123" "API Test (Token)"
     sleep 0.1

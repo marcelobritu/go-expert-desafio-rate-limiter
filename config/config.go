@@ -2,6 +2,8 @@ package config
 
 import (
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -90,8 +92,25 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	// Load token configurations from environment variables
-	config.RateLimit.TokenLimits = loadTokenConfigs()
+	// Load token configurations manually
+	config.RateLimit.TokenLimits = make(map[string]TokenLimit)
+
+	// Check for specific tokens
+	if viper.IsSet("RATE_LIMIT_TOKEN_ABC123_LIMIT") {
+		limit := viper.GetInt("RATE_LIMIT_TOKEN_ABC123_LIMIT")
+		blockTime := time.Minute
+		if viper.IsSet("RATE_LIMIT_TOKEN_ABC123_BLOCK_TIME") {
+			if bt, err := time.ParseDuration(viper.GetString("RATE_LIMIT_TOKEN_ABC123_BLOCK_TIME")); err == nil {
+				blockTime = bt
+			}
+		}
+		config.RateLimit.TokenLimits["ABC123"] = TokenLimit{
+			Limit:     limit,
+			BlockTime: blockTime,
+		}
+	}
+
+	log.Printf("Final token configs: %+v", config.RateLimit.TokenLimits)
 
 	return &config, nil
 }
@@ -100,18 +119,25 @@ func LoadConfig() (*Config, error) {
 func loadTokenConfigs() map[string]TokenLimit {
 	tokenConfigs := make(map[string]TokenLimit)
 
-	// Get all environment variables
-	envVars := viper.AllSettings()
+	// Check environment variables directly
+	for _, env := range os.Environ() {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			key := parts[0]
 
-	// Look for token configuration patterns
-	for key, value := range envVars {
-		if _, ok := value.(string); ok {
+			// Debug: log all environment variables that start with RATE_LIMIT_TOKEN_
+			if strings.HasPrefix(key, "RATE_LIMIT_TOKEN_") {
+				log.Printf("Found token env var: %s", key)
+			}
+
 			// Check for token limit pattern: RATE_LIMIT_TOKEN_<TOKEN>_LIMIT
 			if len(key) > 25 && key[:25] == "RATE_LIMIT_TOKEN_" && key[len(key)-6:] == "_LIMIT" {
 				tokenName := key[25 : len(key)-6]
+				log.Printf("Processing token: %s", tokenName)
 
 				// Get the limit value
 				limit := viper.GetInt(key)
+				log.Printf("Token %s limit: %d", tokenName, limit)
 
 				// Get the block time for this token
 				blockTimeKey := "RATE_LIMIT_TOKEN_" + tokenName + "_BLOCK_TIME"
@@ -133,6 +159,7 @@ func loadTokenConfigs() map[string]TokenLimit {
 					Limit:     limit,
 					BlockTime: blockTime,
 				}
+				log.Printf("Added token config: %+v", tokenConfigs[tokenName])
 			}
 		}
 	}
