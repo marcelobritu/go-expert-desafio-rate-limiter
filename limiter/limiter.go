@@ -66,8 +66,14 @@ func (rl *RateLimiter) CheckIPRateLimit(ctx context.Context, ip string) (*CheckR
 		info.ResetTime = now.Add(time.Second)
 	}
 
-	// Check if limit is exceeded
-	if info.Count >= rl.config.RateLimit.IPLimit {
+	// Increment counter first
+	newCount, err := rl.storage.Increment(ctx, key, time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to increment counter: %w", err)
+	}
+
+	// Check if limit is exceeded after increment
+	if newCount > rl.config.RateLimit.IPLimit {
 		// Block the IP
 		blockDuration := rl.config.RateLimit.IPBlockTime
 		blockUntil := now.Add(blockDuration)
@@ -83,12 +89,6 @@ func (rl *RateLimiter) CheckIPRateLimit(ctx context.Context, ip string) (*CheckR
 			BlockTime: blockDuration,
 			Reason:    "IP rate limit exceeded",
 		}, nil
-	}
-
-	// Increment counter
-	newCount, err := rl.storage.Increment(ctx, key, time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("failed to increment counter: %w", err)
 	}
 
 	remaining := rl.config.RateLimit.IPLimit - newCount
@@ -144,8 +144,14 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 		info.ResetTime = now.Add(time.Second)
 	}
 
-	// Check if limit is exceeded
-	if info.Count >= tokenConfig.Limit {
+	// Increment counter first
+	newCount, err := rl.storage.Increment(ctx, key, time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to increment counter: %w", err)
+	}
+
+	// Check if limit is exceeded after increment
+	if newCount > tokenConfig.Limit {
 		// Block the token
 		blockDuration := tokenConfig.BlockTime
 		blockUntil := now.Add(blockDuration)
@@ -161,12 +167,6 @@ func (rl *RateLimiter) CheckTokenRateLimit(ctx context.Context, token string) (*
 			BlockTime: blockDuration,
 			Reason:    "Token rate limit exceeded",
 		}, nil
-	}
-
-	// Increment counter
-	newCount, err := rl.storage.Increment(ctx, key, time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("failed to increment counter: %w", err)
 	}
 
 	remaining := tokenConfig.Limit - newCount

@@ -65,6 +65,31 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// Manually set values from environment variables if they exist
+	if viper.IsSet("REDIS_HOST") {
+		config.Redis.Host = viper.GetString("REDIS_HOST")
+	}
+	if viper.IsSet("REDIS_PORT") {
+		config.Redis.Port = viper.GetString("REDIS_PORT")
+	}
+	if viper.IsSet("REDIS_PASSWORD") {
+		config.Redis.Password = viper.GetString("REDIS_PASSWORD")
+	}
+	if viper.IsSet("REDIS_DB") {
+		config.Redis.DB = viper.GetInt("REDIS_DB")
+	}
+	if viper.IsSet("SERVER_PORT") {
+		config.Server.Port = viper.GetString("SERVER_PORT")
+	}
+	if viper.IsSet("RATE_LIMIT_IP_LIMIT") {
+		config.RateLimit.IPLimit = viper.GetInt("RATE_LIMIT_IP_LIMIT")
+	}
+	if viper.IsSet("RATE_LIMIT_IP_BLOCK_TIME") {
+		if blockTime, err := time.ParseDuration(viper.GetString("RATE_LIMIT_IP_BLOCK_TIME")); err == nil {
+			config.RateLimit.IPBlockTime = blockTime
+		}
+	}
+
 	// Load token configurations from environment variables
 	config.RateLimit.TokenLimits = loadTokenConfigs()
 
